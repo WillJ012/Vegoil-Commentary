@@ -31,6 +31,7 @@ jobs:
           IMAP_PASS:         ${{ secrets.IMAP_PASS }}
           FM_USERNAME:       ${{ secrets.FM_USERNAME }}
           FM_PASSWORD:       ${{ secrets.FM_PASSWORD }}
+          FM_STORAGE_STATE:  ${{ secrets.FM_STORAGE_STATE }}
           SMTP_HOST:         ${{ secrets.SMTP_HOST }}
           SMTP_PORT:         ${{ secrets.SMTP_PORT }}
           SMTP_SSL:          ${{ secrets.SMTP_SSL }}
