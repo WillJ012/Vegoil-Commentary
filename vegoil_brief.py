@@ -340,21 +340,28 @@ def extract_news_text(pdf_bytes):
 # ──────────────────────────────────────────────────────────────────────────
 # 4) MiniMax 翻译总结
 # ──────────────────────────────────────────────────────────────────────────
-PROMPT_TEMPLATE = """你是一名大宗商品市场分析助理。下面是 Fastmarkets 每日植物油 newsletter 的文本（双栏 PDF 抽取，可能有少量排版/连字瑕疵，请结合上下文阅读）。
+PROMPT_TEMPLATE = """你是一名专业的大宗商品市场翻译兼分析。下面是 Fastmarkets 每日植物油 newsletter 的文本（双栏 PDF 抽取，可能有少量排版/连字瑕疵，请结合上下文阅读）。已不含价格数据表。
 
-任务：
-1. 从中找到**正文最完整的那篇 "Vegoils commentary" 评论**（通常是 Top stories 里最长的一篇）。
-2. 把它翻译并**总结**成一份简洁的中文晨报，覆盖：核心结论、主要驱动因素、关键期货价格变动、现货/基差要点。
-3. 只针对 Vegoils commentary 这一篇。**忽略**价格数据表、谷物(corn/wheat)评论、钢铁/金属等其它板块。
-4. 保留具体数字（涨跌幅、价格、合约月份）。术语用中文，必要处保留英文缩写（CME、CPO、RINs、FOB 等）。
+请输出两部分：
 
-输出格式：直接输出 HTML 片段（不要 markdown、不要 ```、不要 <html>/<body> 外壳）。结构如下：
-<h2>{date} 植物油评论简报</h2>
-<p><strong>核心：</strong>……一两句……</p>
-<h3>主要驱动</h3><ul><li>……</li>…</ul>
-<h3>期货</h3><ul><li>……</li>…</ul>
-<h3>现货 / 基差</h3><ul><li>……</li>…</ul>
-<p><strong>一句话：</strong>……</p>
+【第一部分：完整翻译】
+找到正文最完整的那篇 "Vegoils commentary" 评论（通常是 Top stories 里最长的一篇），把它**完整、忠实地逐段翻译成中文**——不要概括、不要省略，原文有几段就译几段，所有数字、价格、合约月份、机构与人名、引述都保留。
+
+【第二部分：其他内容摘要】
+把 newsletter 里**除这篇 Vegoils commentary 之外**的其他文字内容（其它品类评论如 Soybean/Corn commentary、生柴/EIA 等新闻报道、Palm Rotterdam closing 等），每条用一句中文概括要点。只总结文字类内容，忽略价格数据表。
+
+术语用中文，必要处保留英文缩写（CME、CPO、RINs、FOB、RSO 等）。
+
+输出要求：**只输出最终 HTML 片段，不要任何思考过程、说明或前言**。不要 markdown、不要 ```、不要 <html>/<body> 外壳。严格按下面结构，第一行必须就是标题：
+<h2>{date} FASTMARKETS 植物油评论简报</h2>
+<p><strong>原文标题：</strong>（该篇评论的英文标题）</p>
+<p>……逐段译文，每段一个 p……</p>
+<hr>
+<h3>其他内容摘要</h3>
+<ul>
+<li><strong>（标题/分类）：</strong>一句话要点</li>
+……
+</ul>
 
 newsletter 原文如下：
 ----------
@@ -362,23 +369,33 @@ newsletter 原文如下：
 ----------"""
 
 
+def _clean_model_html(text):
+    """去掉思考过程/代码围栏，只保留从 <h2> 开始的正式译文。"""
+    text = text.strip()
+    text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
+    # 思考型模型可能在正文前加一段推理：从第一个 <h2> 起截取
+    i = text.find("<h2")
+    if i != -1:
+        text = text[i:]
+    return text.strip()
+
+
 def summarize_to_chinese(news_text, date_str):
     client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
     prompt = PROMPT_TEMPLATE.format(date=date_str, body=news_text)
-    log(f"调用 MiniMax（{MODEL}）生成简报 ...")
+    log(f"调用 MiniMax（{MODEL}）翻译 ...")
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=4000,
-        temperature=0.3,
+        max_tokens=8000,
+        temperature=0.2,
         messages=[
-            {"role": "system", "content": "你是一名严谨的大宗商品市场分析助理，输出简洁、数字准确。"},
+            {"role": "system", "content": "你是专业的大宗商品翻译，只输出忠实完整的中文译文，不输出任何思考过程或额外说明。"},
             {"role": "user", "content": prompt},
         ],
     )
-    html = (resp.choices[0].message.content or "").strip()
-    html = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", html).strip()
-    if not html:
-        raise RuntimeError("MiniMax 返回空内容，请检查模型名/额度/base_url。")
+    html = _clean_model_html(resp.choices[0].message.content or "")
+    if not html or "<h2" not in html:
+        raise RuntimeError("MiniMax 返回内容异常（无正文标题），请检查模型名/额度/base_url。")
     return html
 
 
@@ -391,7 +408,7 @@ def send_email(subject, html_body):
              line-height:1.6;color:#1a1a1a;max-width:680px;margin:0 auto;padding:16px;">
 {html_body}
 <hr style="margin-top:24px;border:none;border-top:1px solid #e5e5e5;">
-<p style="color:#999;font-size:12px;">由 Fastmarkets 每日 newsletter 自动翻译总结生成，仅供个人参考。原始数据版权归 Fastmarkets 所有。</p>
+<p style="color:#999;font-size:12px;">由 Fastmarkets 每日 newsletter 自动翻译生成，仅供个人参考。原始内容版权归 Fastmarkets 所有。</p>
 </body></html>"""
 
     msg = MIMEMultipart("alternative")
