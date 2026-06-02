@@ -5,7 +5,7 @@ on:
     # cron 用 UTC。北京/新加坡 08:45 = UTC 00:45（早8小时）。每天触发；
     # 没有 newsletter 的日子脚本会自动空跑退出，无副作用。
     - cron: '45 0 * * *'
-  workflow_dispatch:   # 允许在 Actions 页面手动点「Run workflow」测试
+  workflow_dispatch:   # 允许在 Actions 页面手动「Run workflow」测试
 
 jobs:
   brief:
@@ -20,20 +20,33 @@ jobs:
       - name: 安装依赖
         run: pip install -r requirements.txt
 
+      - name: 安装 Playwright 浏览器
+        run: python -m playwright install --with-deps chromium
+
       - name: 生成并发送简报
         env:
           IMAP_HOST:         ${{ secrets.IMAP_HOST }}
           IMAP_PORT:         ${{ secrets.IMAP_PORT }}
           IMAP_USER:         ${{ secrets.IMAP_USER }}
           IMAP_PASS:         ${{ secrets.IMAP_PASS }}
+          FM_USERNAME:       ${{ secrets.FM_USERNAME }}
+          FM_PASSWORD:       ${{ secrets.FM_PASSWORD }}
           SMTP_HOST:         ${{ secrets.SMTP_HOST }}
           SMTP_PORT:         ${{ secrets.SMTP_PORT }}
           SMTP_SSL:          ${{ secrets.SMTP_SSL }}
           MAIL_TO:           ${{ secrets.MAIL_TO }}
           MINIMAX_API_KEY:   ${{ secrets.MINIMAX_API_KEY }}
-          # 可选覆盖项（不填用默认）：
           MINIMAX_BASE_URL:  ${{ secrets.MINIMAX_BASE_URL }}
           MINIMAX_MODEL:     ${{ secrets.MINIMAX_MODEL }}
           SENDER_CONTAINS:   ${{ secrets.SENDER_CONTAINS }}
           SUBJECT_CONTAINS:  ${{ secrets.SUBJECT_CONTAINS }}
+          LINK_REGEX:        ${{ secrets.LINK_REGEX }}
         run: python vegoil_brief.py
+
+      - name: 失败时上传调试截图
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-snapshots
+          path: debug/
+          if-no-files-found: ignore
