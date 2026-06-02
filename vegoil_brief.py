@@ -33,37 +33,47 @@ from playwright.sync_api import sync_playwright
 # ──────────────────────────────────────────────────────────────────────────
 # 配置
 # ──────────────────────────────────────────────────────────────────────────
+def env(key, default=None, required=False):
+    """读取环境变量；空字符串视为未设置（回落到 default）。"""
+    v = os.environ.get(key)
+    if v is None or v.strip() == "":
+        if required:
+            raise KeyError(key)
+        return default
+    return v.strip()
+
+
 # 收邮件 (IMAP)
-IMAP_HOST = os.environ["IMAP_HOST"]
-IMAP_PORT = int(os.environ.get("IMAP_PORT", "993"))
-IMAP_USER = os.environ["IMAP_USER"]
-IMAP_PASS = os.environ["IMAP_PASS"]               # 邮箱授权码
-MAILBOX   = os.environ.get("MAILBOX", "INBOX")
+IMAP_HOST = env("IMAP_HOST", required=True)
+IMAP_PORT = int(env("IMAP_PORT", 993))
+IMAP_USER = env("IMAP_USER", required=True)
+IMAP_PASS = env("IMAP_PASS", required=True)               # 邮箱授权码
+MAILBOX   = env("MAILBOX", "INBOX")
 
 # Fastmarkets 登录
-FM_USERNAME = os.environ["FM_USERNAME"]           # 你的 Fastmarkets 登录邮箱
-FM_PASSWORD = os.environ["FM_PASSWORD"]           # 你的 Fastmarkets 登录密码
+FM_USERNAME = env("FM_USERNAME", required=True)           # 你的 Fastmarkets 登录邮箱
+FM_PASSWORD = env("FM_PASSWORD", required=True)           # 你的 Fastmarkets 登录密码
 
 # 发邮件 (SMTP)
-SMTP_HOST = os.environ["SMTP_HOST"]
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "465"))
-SMTP_USER = os.environ.get("SMTP_USER", IMAP_USER)
-SMTP_PASS = os.environ.get("SMTP_PASS", IMAP_PASS)
-SMTP_SSL  = os.environ.get("SMTP_SSL", "true").lower() == "true"
-MAIL_TO   = os.environ.get("MAIL_TO", IMAP_USER)
-MAIL_FROM = os.environ.get("MAIL_FROM", SMTP_USER)
+SMTP_HOST = env("SMTP_HOST", required=True)
+SMTP_PORT = int(env("SMTP_PORT", 465))
+SMTP_USER = env("SMTP_USER", IMAP_USER)
+SMTP_PASS = env("SMTP_PASS", IMAP_PASS)
+SMTP_SSL  = env("SMTP_SSL", "true").lower() == "true"
+MAIL_TO   = env("MAIL_TO", IMAP_USER)
+MAIL_FROM = env("MAIL_FROM", SMTP_USER)
 
 # 识别 Fastmarkets 那封邮件
-SENDER_CONTAINS  = os.environ.get("SENDER_CONTAINS", "fastmarkets").lower()
-SUBJECT_CONTAINS = os.environ.get("SUBJECT_CONTAINS", "vegetable oils").lower()
-LOOKBACK_DAYS    = int(os.environ.get("LOOKBACK_DAYS", "2"))
+SENDER_CONTAINS  = env("SENDER_CONTAINS", "fastmarkets").lower()
+SUBJECT_CONTAINS = env("SUBJECT_CONTAINS", "vegetable oils").lower()
+LOOKBACK_DAYS    = int(env("LOOKBACK_DAYS", 2))
 # 从邮件正文提取下载链接的正则（默认抓 downloads.fastmarkets.com/newsletter 链接）
-LINK_REGEX = os.environ.get("LINK_REGEX", r'https://downloads\.fastmarkets\.com/newsletter/[^\s"\'<>]+')
+LINK_REGEX = env("LINK_REGEX", r'https://downloads\.fastmarkets\.com/newsletter/[^\s"\'<>]+')
 
 # MiniMax（OpenAI 兼容）
-MINIMAX_API_KEY  = os.environ["MINIMAX_API_KEY"]
-MINIMAX_BASE_URL = os.environ.get("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
-MODEL = os.environ.get("MINIMAX_MODEL", "MiniMax-M2.5")
+MINIMAX_API_KEY  = env("MINIMAX_API_KEY", required=True)
+MINIMAX_BASE_URL = env("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
+MODEL = env("MINIMAX_MODEL", "MiniMax-M2.5")
 
 DEBUG_DIR = "debug"
 
