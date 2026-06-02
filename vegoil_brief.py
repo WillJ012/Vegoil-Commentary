@@ -353,7 +353,7 @@ GLOSSARY = {
     "FOB": "FOB（离岸）",
     "CIF": "CIF（到岸）",
     "feedstock": "原料",
-    "blending mandate": "掺混强制比例",
+    "blending mandate": "强制掺混比例",
 }
 
 # 把术语表渲染成提示词里的一段
