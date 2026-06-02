@@ -17,6 +17,7 @@ import io
 import re
 import sys
 import ssl
+import time
 import imaplib
 import smtplib
 from datetime import datetime, timedelta
@@ -33,6 +34,19 @@ from playwright.sync_api import sync_playwright
 # ──────────────────────────────────────────────────────────────────────────
 # 配置
 # ──────────────────────────────────────────────────────────────────────────
+def _load_dotenv(path=".env"):
+    """本地运行时，从同目录 .env 文件读取配置（云端用 Secrets，无此文件，跳过）。"""
+    if os.path.exists(path):
+        for line in open(path, encoding="utf-8"):
+            line = line.strip()
+            if line and not line.startswith("#") and "=" in line:
+                k, v = line.split("=", 1)
+                os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
+
+
+_load_dotenv()
+
+
 def env(key, default=None, required=False):
     """读取环境变量；空字符串视为未设置（回落到 default）。"""
     v = os.environ.get(key)
@@ -50,9 +64,11 @@ IMAP_USER = env("IMAP_USER", required=True)
 IMAP_PASS = env("IMAP_PASS", required=True)               # 邮箱授权码
 MAILBOX   = env("MAILBOX", "INBOX")
 
-# Fastmarkets 登录
-FM_USERNAME = env("FM_USERNAME", required=True)           # 你的 Fastmarkets 登录邮箱
-FM_PASSWORD = env("FM_PASSWORD", required=True)           # 你的 Fastmarkets 登录密码
+# Fastmarkets 登录（走 cookie 方案时这两个可不填）
+FM_USERNAME = env("FM_USERNAME")                          # 你的 Fastmarkets 登录邮箱
+FM_PASSWORD = env("FM_PASSWORD")                          # 你的 Fastmarkets 登录密码
+# 本地 capture_session.py 抓到的会话 JSON（推荐方案：填了就用它，跳过登录）
+FM_STORAGE_STATE = env("FM_STORAGE_STATE")
 
 # 发邮件 (SMTP)
 SMTP_HOST = env("SMTP_HOST", required=True)
@@ -206,20 +222,67 @@ def _looks_logged_out(page):
     return ("auth.fastmarkets" in page.url) and bool(page.query_selector("input[type=password]"))
 
 
+def _fetch_pdf(ctx, pdf_url, tries=3):
+    for attempt in range(1, tries + 1):
+        resp = ctx.request.get(pdf_url, headers={"Accept": "application/pdf"})
+        if resp.status == 200:
+            body = resp.body()
+            if body[:4] == b"%PDF":
+                return body
+            log(f"第 {attempt} 次：返回 200 但不是 PDF（会话可能失效），重试 ...")
+        else:
+            log(f"第 {attempt} 次：HTTP {resp.status}，重试 ...")
+        time.sleep(4)
+    return None
+
+
 def download_pdf_with_login(pdf_url):
+    storage = None
+    if FM_STORAGE_STATE:
+        with open("fm_session.json", "w", encoding="utf-8") as f:
+            f.write(FM_STORAGE_STATE)
+        storage = "fm_session.json"
+        log("已加载登录会话 cookie（来自 Secret）")
+    elif os.path.exists("fm_session.json"):
+        storage = "fm_session.json"
+        log("已加载本地 fm_session.json 会话 cookie")
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
         )
         ctx = browser.new_context(
+            storage_state=storage,
             user_agent=("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
                         "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"),
             viewport={"width": 1366, "height": 900},
             locale="en-US",
         )
+
+        # ───── 路线①：有保存的 cookie → 直接取 PDF，不走登录 ─────
+        if storage:
+            log("用保存的会话直接请求 PDF ...")
+            data = _fetch_pdf(ctx, pdf_url)
+            if data:
+                log(f"✅ 拿到 PDF（{len(data)} 字节）")
+                browser.close()
+                return data
+            page = ctx.new_page()
+            try:
+                page.goto(pdf_url, wait_until="domcontentloaded", timeout=30000)
+            except Exception:
+                pass
+            _dump(page, "session_expired")
+            browser.close()
+            raise RuntimeError(
+                "保存的登录会话已失效（或被境外IP反爬拦截）。"
+                "请在本地重新运行 capture_session.py 抓新 cookie，更新 GitHub Secret 中的 FM_STORAGE_STATE。"
+            )
+
+        # ───── 路线②：没有保存 cookie → 退回交互式登录（冷启动，可能 500）─────
         page = ctx.new_page()
-        log("打开下载链接，等待是否跳转登录 ...")
+        log("（未提供 FM_STORAGE_STATE）尝试交互式登录 ...")
         try:
             page.goto(pdf_url, wait_until="domcontentloaded", timeout=60000)
         except Exception as e:
@@ -232,35 +295,19 @@ def download_pdf_with_login(pdf_url):
             except Exception as e:
                 _dump(page, "login_failed")
                 browser.close()
-                raise RuntimeError(f"登录步骤出错（选择器对不上或被拦）：{e}")
+                raise RuntimeError(f"登录步骤出错：{e}")
 
-        log(f"登录后落地：{page.url}")
         if _looks_logged_out(page):
             _dump(page, "still_logged_out")
             browser.close()
             raise RuntimeError("提交后仍停在登录页：账号密码可能不对，或被反爬拦截。")
 
-        # 用已登录会话请求 PDF；signin-oidc 回跳后偶发 500，重试两次
-        data = None
-        for attempt in range(1, 4):
-            log(f"用已登录会话请求 PDF（第 {attempt} 次）...")
-            resp = ctx.request.get(pdf_url, headers={"Accept": "application/pdf"})
-            if resp.status == 200:
-                body = resp.body()
-                if body[:4] == b"%PDF":
-                    data = body
-                    break
-                else:
-                    log("返回 200 但不是 PDF，稍后重试 ...")
-            else:
-                log(f"HTTP {resp.status}，稍后重试 ...")
-            page.wait_for_timeout(4000)
-
+        data = _fetch_pdf(ctx, pdf_url)
         if data is None:
             _dump(page, "download_failed")
             browser.close()
-            raise RuntimeError("多次尝试仍未拿到 PDF（500/非PDF）。详见 debug 截图。")
-
+            raise RuntimeError("交互式登录后仍拿不到 PDF（多半是 signin-oidc 冷启动 500）。"
+                               "建议改用 cookie 方案：本地跑 capture_session.py。")
         log(f"✅ 拿到 PDF（{len(data)} 字节）")
         browser.close()
         return data
