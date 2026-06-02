@@ -182,14 +182,28 @@ def _do_login(page):
     page.fill(email_sel, FM_USERNAME)
 
     if page.query_selector(pass_sel):           # 邮箱+密码同屏
+        log("填入登录密码")
         page.fill(pass_sel, FM_PASSWORD)
-        _click_submit(page)
     else:                                        # 分两步：先邮箱后密码
         _click_submit(page)
         page.wait_for_selector(pass_sel, timeout=30000)
         log("填入登录密码")
         page.fill(pass_sel, FM_PASSWORD)
-        _click_submit(page)
+
+    # 提交后，关键：不要去打断后续的 OAuth form_post 自动回跳，
+    # 让浏览器自己把跳转链走完即可。
+    log("提交登录，等待 OAuth 回跳完成 ...")
+    _click_submit(page)
+    try:
+        page.wait_for_load_state("networkidle", timeout=60000)
+    except Exception:
+        pass
+    page.wait_for_timeout(5000)   # 给 form_post 自动提交留出余量
+
+
+def _looks_logged_out(page):
+    # 仍停在登录域名且还能看到密码框 = 登录没成功
+    return ("auth.fastmarkets" in page.url) and bool(page.query_selector("input[type=password]"))
 
 
 def download_pdf_with_login(pdf_url):
@@ -206,30 +220,47 @@ def download_pdf_with_login(pdf_url):
         )
         page = ctx.new_page()
         log("打开下载链接，等待是否跳转登录 ...")
-        page.goto(pdf_url, wait_until="domcontentloaded", timeout=60000)
+        try:
+            page.goto(pdf_url, wait_until="domcontentloaded", timeout=60000)
+        except Exception as e:
+            log(f"首次打开有跳转中断属正常：{e}")
 
         if "auth.fastmarkets" in page.url or page.query_selector("input[type=password]"):
             log(f"被重定向到登录页：{page.url}")
             try:
                 _do_login(page)
-                page.wait_for_url(lambda u: "auth.fastmarkets" not in u, timeout=60000)
-                log(f"登录后跳转到：{page.url}")
             except Exception as e:
                 _dump(page, "login_failed")
-                raise RuntimeError(f"登录失败（可能被反爬拦截或选择器对不上）：{e}")
+                browser.close()
+                raise RuntimeError(f"登录步骤出错（选择器对不上或被拦）：{e}")
 
-        # 用已登录会话直接请求 PDF 字节
-        log("用已登录会话请求 PDF ...")
-        resp = ctx.request.get(pdf_url, headers={"Accept": "application/pdf"})
-        if resp.status != 200:
-            _dump(page, "download_http_error")
+        log(f"登录后落地：{page.url}")
+        if _looks_logged_out(page):
+            _dump(page, "still_logged_out")
             browser.close()
-            raise RuntimeError(f"下载 PDF 失败 HTTP {resp.status}")
-        data = resp.body()
-        if data[:4] != b"%PDF":
-            _dump(page, "not_a_pdf")
+            raise RuntimeError("提交后仍停在登录页：账号密码可能不对，或被反爬拦截。")
+
+        # 用已登录会话请求 PDF；signin-oidc 回跳后偶发 500，重试两次
+        data = None
+        for attempt in range(1, 4):
+            log(f"用已登录会话请求 PDF（第 {attempt} 次）...")
+            resp = ctx.request.get(pdf_url, headers={"Accept": "application/pdf"})
+            if resp.status == 200:
+                body = resp.body()
+                if body[:4] == b"%PDF":
+                    data = body
+                    break
+                else:
+                    log("返回 200 但不是 PDF，稍后重试 ...")
+            else:
+                log(f"HTTP {resp.status}，稍后重试 ...")
+            page.wait_for_timeout(4000)
+
+        if data is None:
+            _dump(page, "download_failed")
             browser.close()
-            raise RuntimeError("返回内容不是 PDF（多半仍未登录成功 / 被反爬拦截）")
+            raise RuntimeError("多次尝试仍未拿到 PDF（500/非PDF）。详见 debug 截图。")
+
         log(f"✅ 拿到 PDF（{len(data)} 字节）")
         browser.close()
         return data
