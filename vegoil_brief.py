@@ -340,6 +340,25 @@ def extract_news_text(pdf_bytes):
 # ──────────────────────────────────────────────────────────────────────────
 # 4) MiniMax 翻译总结
 # ──────────────────────────────────────────────────────────────────────────
+# 术语对照表：发现译得不对的词，照着格式往这里加一行即可（不用懂代码）。
+# 左边是英文原文，右边是你要的中文译法。
+GLOSSARY = {
+    "down the curve": "在远期曲线上",
+    "along the curve": "沿远期曲线",
+    "front-month": "近月（首行）合约",
+    "most-active contract": "主力合约",
+    "basis": "基差",
+    "premium": "升水",
+    "discount": "贴水",
+    "FOB": "FOB（离岸）",
+    "CIF": "CIF（到岸）",
+    "feedstock": "原料",
+    "blending mandate": "掺混强制比例",
+}
+
+# 把术语表渲染成提示词里的一段
+_GLOSSARY_LINES = "\n".join(f"- {en} → {zh}" for en, zh in GLOSSARY.items())
+
 PROMPT_TEMPLATE = """你是一名专业的大宗商品市场翻译兼分析。下面是 Fastmarkets 每日植物油 newsletter 的文本（双栏 PDF 抽取，可能有少量排版/连字瑕疵，请结合上下文阅读）。已不含价格数据表。
 
 请输出两部分：
@@ -351,6 +370,8 @@ PROMPT_TEMPLATE = """你是一名专业的大宗商品市场翻译兼分析。�
 把 newsletter 里**除这篇 Vegoils commentary 之外**的其他文字内容（其它品类评论如 Soybean/Corn commentary、生柴/EIA 等新闻报道、Palm Rotterdam closing 等），每条用一句中文概括要点。只总结文字类内容，忽略价格数据表。
 
 术语用中文，必要处保留英文缩写（CME、CPO、RINs、FOB、RSO 等）。
+**以下术语必须严格按此对照表翻译，不得自行改译：**
+{glossary}
 
 输出要求：**只输出最终 HTML 片段，不要任何思考过程、说明或前言**。不要 markdown、不要 ```、不要 <html>/<body> 外壳。严格按下面结构，第一行必须就是标题：
 <h2>{date} FASTMARKETS 植物油评论简报</h2>
@@ -382,7 +403,7 @@ def _clean_model_html(text):
 
 def summarize_to_chinese(news_text, date_str):
     client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
-    prompt = PROMPT_TEMPLATE.format(date=date_str, body=news_text)
+    prompt = PROMPT_TEMPLATE.format(date=date_str, glossary=_GLOSSARY_LINES, body=news_text)
     log(f"调用 MiniMax（{MODEL}）翻译 ...")
     resp = client.chat.completions.create(
         model=MODEL,
