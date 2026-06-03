@@ -460,12 +460,20 @@ newsletter 原文如下：
 
 def _clean_model_html(text):
     """去掉思考过程/代码围栏，只保留从 <h2> 开始的正式译文。"""
-    text = text.strip()
+    text = (text or "").strip()
+    # 1) 去掉 MiniMax 的 <think>...</think> 思考块（可能未闭合）
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I)
+    text = re.sub(r"<think>.*$", "", text, flags=re.S | re.I)
+    text = re.sub(r"</?think>", "", text, flags=re.I)
+    # 2) 去代码围栏
     text = re.sub(r"^```[a-zA-Z]*\s*|\s*```$", "", text).strip()
-    # 思考型模型可能在正文前加一段推理：从第一个 <h2> 起截取
+    # 3) 从第一个 <h2> 起截取（思考多在 h2 之前）
     i = text.find("<h2")
     if i != -1:
         text = text[i:]
+    # 4) 兜底：删掉混进正文段落里、以元话语开头的句子（思考漏到 h2 之后的情况）
+    META = r"(我需要|我将|让我|首先[，,]|然后是|目标标题是|根据要求|按照要求|以下是|现在开始|好的[，,])"
+    text = re.sub(rf"<p>\s*-?\s*{META}.*?</p>", "", text, flags=re.S)
     return text.strip()
 
 
@@ -489,6 +497,8 @@ def _call_model(client, prompt, extra_system=""):
             {"role": "system", "content": sys},
             {"role": "user", "content": prompt},
         ],
+        # MiniMax 思考型模型：把思考分流到 reasoning_details，content 只留正文
+        extra_body={"reasoning_split": True},
     )
     finish = resp.choices[0].finish_reason
     return _clean_model_html(resp.choices[0].message.content or ""), finish
