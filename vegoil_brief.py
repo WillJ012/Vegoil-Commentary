@@ -331,6 +331,45 @@ def download_pdf_with_login(pdf_url):
 # ──────────────────────────────────────────────────────────────────────────
 # 3) 抽取 PDF 文本（双栏分别抽），价格表前截断
 # ──────────────────────────────────────────────────────────────────────────
+def _find_commentary_title(pdf_bytes):
+    """用字号定位真正的 Vegoils commentary 大标题（区别于 Top stories 里的小字号摘要标题）。"""
+    from collections import defaultdict
+    lines = []  # 顺序保存 (page, col, top, text, size)
+    with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+        for pi, page in enumerate(pdf.pages[:4]):
+            mid = page.width / 2
+            words = page.extract_words(extra_attrs=["size"], use_text_flow=False)
+            buckets = defaultdict(list)
+            for w in words:
+                col = 0 if w["x0"] < mid else 1
+                buckets[(pi, col, round(w["top"] / 3))].append(w)
+            for key, ws in sorted(buckets.items()):
+                ws.sort(key=lambda w: w["x0"])
+                text = " ".join(w["text"] for w in ws).replace("\x00", "")
+                size = max(float(w.get("size", 0)) for w in ws)
+                lines.append((key[0], key[1], key[2], text, size))
+
+    # 找含 "vegoils commentary" 且字号最大的那一行
+    cand = [(i, ln) for i, ln in enumerate(lines)
+            if re.search(r"vegoils\s+commentary", ln[3], re.I)]
+    if not cand:
+        return None
+    start_i, start_ln = max(cand, key=lambda t: t[1][4])
+    title_size = start_ln[4]
+
+    # 从该行起，把同一栏、字号相近的连续行拼成完整标题（标题常折行）
+    parts = [start_ln[3]]
+    pg, col = start_ln[0], start_ln[1]
+    for ln in lines[start_i + 1:]:
+        if ln[0] == pg and ln[1] == col and ln[4] >= title_size - 0.6:
+            parts.append(ln[3])
+        else:
+            break
+    title = " ".join(parts)
+    title = re.sub(r"\s+", " ", title).strip()
+    return title
+
+
 def extract_news_text(pdf_bytes):
     out = []
     with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
@@ -349,7 +388,13 @@ def extract_news_text(pdf_bytes):
     news = full[:cut].strip()
     if "Vegoils commentary" not in news:
         log("⚠️ 未找到 'Vegoils commentary'，交给模型自行判断。")
-    return news
+
+    real_title = _find_commentary_title(pdf_bytes)
+    if real_title:
+        log(f"按字号定位到原文标题：{real_title}")
+    else:
+        log("未能按字号定位标题，交给模型自行判断。")
+    return news, real_title
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -381,9 +426,13 @@ PROMPT_TEMPLATE = """⚠️ 最重要的要求：所有输出必须是**中文**
 请输出两部分：
 
 【第一部分：完整翻译】
-1. 先在文中找到**正文最完整、篇幅最长的那一篇 "Vegoils commentary" 评论**（注意：邮件里有多处以 "Vegoils commentary:" 开头的条目，多数只是一两句的标题摘要；你要的是那篇有十几个自然段、含具体期货收盘价/基差/各地报价的完整正文）。
+1. 你要翻译的那篇评论，其**确切原文标题已经给你**（见下方“目标标题”）。请翻译标题与这个标题一致的那一篇完整正文——它有十几个自然段、含具体期货收盘价/基差/各地报价。**忽略**其它以 "Vegoils commentary:" 开头但只有一两句的简短条目。
 2. 把这篇评论**逐段翻译成中文**——每一句都要译成中文，**不得保留任何英文整句**（CME、CPO、RINs、FOB 等专有缩写可保留）。不要概括、不要省略，原文有几段就译几段，所有数字、价格、合约月份、机构名、人名、引述都要完整译出并保留。
 3. **只翻译这一篇 commentary 的正文**，不要把其它板块标题（如 aluminium、testliner、farmer sentiment 等）混进第一部分。
+
+目标标题（请在“原文标题”一栏**原样填写**这个，不要改成别的）：
+{real_title}
+4. ⚠️ "原文标题"一栏，**必须填你上面实际翻译的这篇正文自己的标题**（即紧挨这篇正文、以 "Vegoils commentary:" 开头的那一行）。邮件别处的 Top stories 里也有以 "Vegoils commentary:" 开头的简述小标题，**那些不是本文标题，绝对不要填那个**。务必保证"原文标题"与你翻译的正文内容一致、对得上。
 
 【第二部分：其他内容摘要】
 把 newsletter 里**除这篇 Vegoils commentary 正文之外**的其他文字内容（其它品类评论 Soybean/Corn commentary、生柴/EIA 等新闻、Palm Rotterdam closing 等），每条用**一句中文**概括。只总结文字类内容，忽略价格数据表。
@@ -444,9 +493,12 @@ def _call_model(client, prompt, extra_system=""):
     return _clean_model_html(resp.choices[0].message.content or "")
 
 
-def summarize_to_chinese(news_text, date_str):
+def summarize_to_chinese(news_text, date_str, real_title=None):
     client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
-    prompt = PROMPT_TEMPLATE.format(date=date_str, glossary=_GLOSSARY_LINES, body=news_text)
+    title_for_prompt = real_title or "（未能自动识别，请你自己找正文最完整的那篇 Vegoils commentary）"
+    prompt = PROMPT_TEMPLATE.format(
+        date=date_str, glossary=_GLOSSARY_LINES,
+        real_title=title_for_prompt, body=news_text)
 
     log(f"调用 MiniMax（{MODEL}）翻译 ...")
     html = _call_model(client, prompt)
@@ -510,9 +562,9 @@ def main():
         log("没找到带下载链接的 Fastmarkets 邮件（可能今天还没到）。正常退出。")
         return
     pdf_bytes = download_pdf_with_login(link)
-    news = extract_news_text(pdf_bytes)
+    news, real_title = extract_news_text(pdf_bytes)
     date_str = datetime.now().strftime("%Y-%m-%d")
-    html = summarize_to_chinese(news, date_str)
+    html = summarize_to_chinese(news, date_str, real_title)
 
     m = re.search(r"<h2>(.*?)</h2>", html)
     title = re.sub(r"<[^>]+>", "", m.group(1)) if m else f"{date_str} 植物油评论简报"
