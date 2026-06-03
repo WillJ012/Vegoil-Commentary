@@ -20,7 +20,7 @@ import ssl
 import time
 import imaplib
 import smtplib
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from email import message_from_bytes
 from email.header import decode_header, make_header
 from email.mime.text import MIMEText
@@ -95,7 +95,7 @@ DEBUG_DIR = "debug"
 
 
 def log(msg):
-    print(f"[{datetime.utcnow():%Y-%m-%d %H:%M:%S}Z] {msg}", flush=True)
+    print(f"[{datetime.now(timezone.utc):%Y-%m-%d %H:%M:%S}Z] {msg}", flush=True)
 
 
 def _decode(s):
@@ -116,7 +116,7 @@ def fetch_newsletter_link():
     M.login(IMAP_USER, IMAP_PASS)
     M.select(MAILBOX)
 
-    since = (datetime.utcnow() - timedelta(days=LOOKBACK_DAYS)).strftime("%d-%b-%Y")
+    since = (datetime.now(timezone.utc) - timedelta(days=LOOKBACK_DAYS)).strftime("%d-%b-%Y")
     typ, data = M.search(None, f'(SINCE {since})')
     ids = data[0].split() if typ == "OK" else []
     log(f"近 {LOOKBACK_DAYS} 天 {len(ids)} 封邮件，倒序找 Fastmarkets...")
@@ -353,7 +353,7 @@ GLOSSARY = {
     "FOB": "FOB（离岸）",
     "CIF": "CIF（到岸）",
     "feedstock": "原料",
-    "blending mandate": "强制掺混比例",
+    "blending mandate": "掺混强制比例",
 }
 
 # 把术语表渲染成提示词里的一段
@@ -432,21 +432,25 @@ def send_email(subject, html_body):
 <p style="color:#999;font-size:12px;">由 Fastmarkets 每日 newsletter 自动翻译生成，仅供个人参考。原始内容版权归 Fastmarkets 所有。</p>
 </body></html>"""
 
+    # 清洗收件人：去掉换行/空白，拆成干净的地址列表
+    recipients = [a.strip() for a in re.split(r"[,\s]+", MAIL_TO) if a.strip()]
+    to_header = ", ".join(recipients)
+
     msg = MIMEMultipart("alternative")
     msg["Subject"] = subject
-    msg["From"] = formataddr(("植物油简报", MAIL_FROM))
-    msg["To"] = MAIL_TO
+    msg["From"] = formataddr(("植物油简报", MAIL_FROM.strip()))
+    msg["To"] = to_header
     msg.attach(MIMEText(re.sub(r"<[^>]+>", "", html_body), "plain", "utf-8"))
     msg.attach(MIMEText(full_html, "html", "utf-8"))
 
-    log(f"发送邮件到 {MAIL_TO} ...")
+    log(f"发送邮件到 {to_header} ...")
     if SMTP_SSL:
         server = smtplib.SMTP_SSL(SMTP_HOST, SMTP_PORT, context=ssl.create_default_context())
     else:
         server = smtplib.SMTP(SMTP_HOST, SMTP_PORT)
         server.starttls(context=ssl.create_default_context())
     server.login(SMTP_USER, SMTP_PASS)
-    server.sendmail(MAIL_FROM, [a.strip() for a in MAIL_TO.split(",")], msg.as_string())
+    server.sendmail(MAIL_FROM.strip(), recipients, msg.as_string())
     server.quit()
     log("✅ 已发送")
 
