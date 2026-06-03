@@ -374,28 +374,32 @@ GLOSSARY = {
 # 把术语表渲染成提示词里的一段
 _GLOSSARY_LINES = "\n".join(f"- {en} → {zh}" for en, zh in GLOSSARY.items())
 
-PROMPT_TEMPLATE = """你是一名专业的大宗商品市场翻译兼分析。下面是 Fastmarkets 每日植物油 newsletter 的文本（双栏 PDF 抽取，可能有少量排版/连字瑕疵，请结合上下文阅读）。已不含价格数据表。
+PROMPT_TEMPLATE = """⚠️ 最重要的要求：所有输出必须是**中文**。原文是英文，你的任务是把它**翻译成中文**，绝对不允许原样照抄英文句子。
+
+你是一名专业的大宗商品市场翻译。下面是 Fastmarkets 每日植物油 newsletter 的文本（双栏 PDF 抽取，可能有少量排版/连字瑕疵，请结合上下文阅读）。已不含价格数据表。
 
 请输出两部分：
 
 【第一部分：完整翻译】
-找到正文最完整的那篇 "Vegoils commentary" 评论（通常是 Top stories 里最长的一篇），把它**完整、忠实地逐段翻译成中文**——不要概括、不要省略，原文有几段就译几段，所有数字、价格、合约月份、机构与人名、引述都保留。
+1. 先在文中找到**正文最完整、篇幅最长的那一篇 "Vegoils commentary" 评论**（注意：邮件里有多处以 "Vegoils commentary:" 开头的条目，多数只是一两句的标题摘要；你要的是那篇有十几个自然段、含具体期货收盘价/基差/各地报价的完整正文）。
+2. 把这篇评论**逐段翻译成中文**——每一句都要译成中文，**不得保留任何英文整句**（CME、CPO、RINs、FOB 等专有缩写可保留）。不要概括、不要省略，原文有几段就译几段，所有数字、价格、合约月份、机构名、人名、引述都要完整译出并保留。
+3. **只翻译这一篇 commentary 的正文**，不要把其它板块标题（如 aluminium、testliner、farmer sentiment 等）混进第一部分。
 
 【第二部分：其他内容摘要】
-把 newsletter 里**除这篇 Vegoils commentary 之外**的其他文字内容（其它品类评论如 Soybean/Corn commentary、生柴/EIA 等新闻报道、Palm Rotterdam closing 等），每条用一句中文概括要点。只总结文字类内容，忽略价格数据表。
+把 newsletter 里**除这篇 Vegoils commentary 正文之外**的其他文字内容（其它品类评论 Soybean/Corn commentary、生柴/EIA 等新闻、Palm Rotterdam closing 等），每条用**一句中文**概括。只总结文字类内容，忽略价格数据表。
 
-术语用中文，必要处保留英文缩写（CME、CPO、RINs、FOB、RSO 等）。
-**以下术语必须严格按此对照表翻译，不得自行改译：**
+**以下术语必须严格按此对照表翻译：**
 {glossary}
 
-输出要求：**只输出最终 HTML 片段，不要任何思考过程、说明或前言**。不要 markdown、不要 ```、不要 <html>/<body> 外壳。严格按下面结构，第一行必须就是标题：
+输出要求：**只输出最终 HTML 片段，全程中文，不要思考过程/说明/前言，不要 markdown、不要 ```、不要 <html>/<body> 外壳。** 第一行必须就是标题：
 <h2>{date} FASTMARKETS 植物油评论简报</h2>
-<p><strong>原文标题：</strong>（该篇评论的英文标题）</p>
-<p>……逐段译文，每段一个 p……</p>
+<p><strong>原文标题：</strong>（该篇评论的英文标题，这一处可保留英文）</p>
+<p>……第一段中文译文……</p>
+<p>……第二段中文译文……</p>
 <hr>
 <h3>其他内容摘要</h3>
 <ul>
-<li><strong>（标题/分类）：</strong>一句话要点</li>
+<li><strong>（标题/分类）：</strong>一句话中文要点</li>
 ……
 </ul>
 
@@ -416,20 +420,49 @@ def _clean_model_html(text):
     return text.strip()
 
 
-def summarize_to_chinese(news_text, date_str):
-    client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
-    prompt = PROMPT_TEMPLATE.format(date=date_str, glossary=_GLOSSARY_LINES, body=news_text)
-    log(f"调用 MiniMax（{MODEL}）翻译 ...")
+def _chinese_ratio(html):
+    """正文（去标签）里中文字符占比，用来判断模型是否真的翻译了。"""
+    text = re.sub(r"<[^>]+>", "", html)
+    text = re.sub(r"\s+", "", text)
+    if not text:
+        return 0.0
+    cn = len(re.findall(r"[\u4e00-\u9fff]", text))
+    return cn / len(text)
+
+
+def _call_model(client, prompt, extra_system=""):
+    sys = "你是专业的大宗商品翻译，全程只输出中文译文（专有缩写除外），不输出任何思考过程或额外说明。" + extra_system
     resp = client.chat.completions.create(
         model=MODEL,
         max_tokens=8000,
         temperature=0.2,
         messages=[
-            {"role": "system", "content": "你是专业的大宗商品翻译，只输出忠实完整的中文译文，不输出任何思考过程或额外说明。"},
+            {"role": "system", "content": sys},
             {"role": "user", "content": prompt},
         ],
     )
-    html = _clean_model_html(resp.choices[0].message.content or "")
+    return _clean_model_html(resp.choices[0].message.content or "")
+
+
+def summarize_to_chinese(news_text, date_str):
+    client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
+    prompt = PROMPT_TEMPLATE.format(date=date_str, glossary=_GLOSSARY_LINES, body=news_text)
+
+    log(f"调用 MiniMax（{MODEL}）翻译 ...")
+    html = _call_model(client, prompt)
+    ratio = _chinese_ratio(html)
+    log(f"译文中文占比：{ratio:.0%}")
+
+    # 占比过低 = 多半没翻译（照抄了英文），用更强指令重试一次
+    if ratio < 0.30:
+        log("中文占比过低，疑似未翻译，加强指令重试一次 ...")
+        html = _call_model(
+            client, prompt,
+            extra_system="特别注意：上一次你把英文原样输出了，这是错误的。这一次每一句都必须是中文译文，禁止出现英文整句。",
+        )
+        ratio = _chinese_ratio(html)
+        log(f"重试后中文占比：{ratio:.0%}")
+
     if not html or "<h2" not in html:
         raise RuntimeError("MiniMax 返回内容异常（无正文标题），请检查模型名/额度/base_url。")
     return html
