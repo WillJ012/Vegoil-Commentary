@@ -483,14 +483,15 @@ def _call_model(client, prompt, extra_system=""):
     sys = "你是专业的大宗商品翻译，全程只输出中文译文（专有缩写除外），不输出任何思考过程或额外说明。" + extra_system
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=8000,
+        max_tokens=16000,
         temperature=0.2,
         messages=[
             {"role": "system", "content": sys},
             {"role": "user", "content": prompt},
         ],
     )
-    return _clean_model_html(resp.choices[0].message.content or "")
+    finish = resp.choices[0].finish_reason
+    return _clean_model_html(resp.choices[0].message.content or ""), finish
 
 
 def summarize_to_chinese(news_text, date_str, real_title=None):
@@ -501,19 +502,22 @@ def summarize_to_chinese(news_text, date_str, real_title=None):
         real_title=title_for_prompt, body=news_text)
 
     log(f"调用 MiniMax（{MODEL}）翻译 ...")
-    html = _call_model(client, prompt)
+    html, finish = _call_model(client, prompt)
     ratio = _chinese_ratio(html)
     log(f"译文中文占比：{ratio:.0%}")
 
     # 占比过低 = 多半没翻译（照抄了英文），用更强指令重试一次
     if ratio < 0.30:
         log("中文占比过低，疑似未翻译，加强指令重试一次 ...")
-        html = _call_model(
+        html, finish = _call_model(
             client, prompt,
             extra_system="特别注意：上一次你把英文原样输出了，这是错误的。这一次每一句都必须是中文译文，禁止出现英文整句。",
         )
         ratio = _chinese_ratio(html)
         log(f"重试后中文占比：{ratio:.0%}")
+
+    if finish == "length":
+        log("⚠️ 译文可能被长度上限截断（finish_reason=length），如发现结尾不完整，需再调高 max_tokens。")
 
     if not html or "<h2" not in html:
         raise RuntimeError("MiniMax 返回内容异常（无正文标题），请检查模型名/额度/base_url。")
