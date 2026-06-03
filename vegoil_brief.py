@@ -155,10 +155,25 @@ def _extract_link(msg):
             if payload:
                 html += payload.decode(part.get_content_charset() or "utf-8", "ignore")
     html = html.replace("&amp;", "&")
+
+    # 调试：列出邮件里所有 newsletter 下载链接（去掉 utm 追踪参数便于看清期号）
+    all_links = re.findall(r'https://downloads\.fastmarkets\.com/newsletter/[^\s"\'<>]+', html)
+    seen = []
+    for L in all_links:
+        short = L.split("?")[0]
+        if short not in seen:
+            seen.append(short)
+    log(f"邮件中找到 {len(seen)} 个不同的下载链接（已去重去追踪参数）：")
+    for L in seen:
+        # 拆成两行打印，避免界面把长链接截断
+        log(f"  期号尾段 = {L.split('/')[-1]}")
+        log(f"  完整 = {L}")
+
     m = re.search(LINK_REGEX, html)
     if m:
-        return m.group(0)
-    # 兜底：任何含 newsletter 的 fastmarkets 链接
+        chosen = m.group(0)
+        log(f"最终选用尾段 = {chosen.split('?')[0].split('/')[-1]}")
+        return chosen
     m = re.search(r'https://[^\s"\'<>]*fastmarkets[^\s"\'<>]*newsletter[^\s"\'<>]*', html)
     return m.group(0) if m else None
 
