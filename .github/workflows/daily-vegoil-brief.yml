@@ -1,10 +1,7 @@
 name: 每日植物油简报
 
 on:
-  schedule:
-    # cron 用 UTC。北京/新加坡 08:45 = UTC 00:45（早8小时）。每天触发；
-    # 没有 newsletter 的日子脚本会自动空跑退出，无副作用。
-    - cron: '30 6 * * *'
+
   workflow_dispatch:   # 允许在 Actions 页面手动「Run workflow」测试
 
 jobs:
