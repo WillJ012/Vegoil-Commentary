@@ -412,6 +412,7 @@ GLOSSARY = {
     "discount": "贴水",
     "FOB": "FOB（离岸）",
     "CIF": "CIF（到岸）",
+    "palm olein": "24度棕榈油"
     "feedstock": "原料",
     "blending mandate": "掺混强制比例",
 }
