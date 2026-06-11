@@ -492,7 +492,7 @@ def _call_model(client, prompt, extra_system=""):
     sys = "你是专业的大宗商品翻译，全程只输出中文译文（专有缩写除外），不输出任何思考过程或额外说明。" + extra_system
     resp = client.chat.completions.create(
         model=MODEL,
-        max_tokens=16000,
+        max_tokens=160000,
         temperature=0.2,
         messages=[
             {"role": "system", "content": sys},
