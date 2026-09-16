@@ -3,6 +3,11 @@ name: 每日植物油简报
 on:
 
   workflow_dispatch:   # 允许在 Actions 页面手动「Run workflow」测试
+    inputs:
+      test_to:
+        description: "测试收件地址：填了就只发这个地址；留空 = 按正常收件人发（cron-job.org 定时走的这条）"
+        required: false
+        default: ""
 
 jobs:
   brief:
@@ -32,7 +37,7 @@ jobs:
           SMTP_HOST:         ${{ secrets.SMTP_HOST }}
           SMTP_PORT:         ${{ secrets.SMTP_PORT }}
           SMTP_SSL:          ${{ secrets.SMTP_SSL }}
-          MAIL_TO:           ${{ secrets.MAIL_TO }}
+          MAIL_TO:           ${{ inputs.test_to || secrets.MAIL_TO }}
           # ── 新配置（优先使用）
           LLM_API_KEY:       ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL:      ${{ secrets.LLM_BASE_URL }}
