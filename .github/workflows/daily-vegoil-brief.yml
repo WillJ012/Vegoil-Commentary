@@ -33,10 +33,16 @@ jobs:
           SMTP_PORT:         ${{ secrets.SMTP_PORT }}
           SMTP_SSL:          ${{ secrets.SMTP_SSL }}
           MAIL_TO:           ${{ secrets.MAIL_TO }}
+          # ── 新配置（优先使用）
           LLM_API_KEY:       ${{ secrets.LLM_API_KEY }}
           LLM_BASE_URL:      ${{ secrets.LLM_BASE_URL }}
           LLM_MODEL:         ${{ secrets.LLM_MODEL }}
           LLM_MAX_TOKENS:    ${{ secrets.LLM_MAX_TOKENS }}
+          # ── 过渡期兼容：LLM_API_KEY 为空时，脚本回退用到下面这三个旧名字。
+          #    确认 LLM_API_KEY 生效、云端跑通后，这三行和脚本里的回退可以一起删掉。
+          MINIMAX_API_KEY:   ${{ secrets.MINIMAX_API_KEY }}
+          MINIMAX_BASE_URL:  ${{ secrets.MINIMAX_BASE_URL }}
+          MINIMAX_MODEL:     ${{ secrets.MINIMAX_MODEL }}
           SENDER_CONTAINS:   ${{ secrets.SENDER_CONTAINS }}
           SUBJECT_CONTAINS:  ${{ secrets.SUBJECT_CONTAINS }}
           LINK_REGEX:        ${{ secrets.LINK_REGEX }}
