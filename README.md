@@ -84,8 +84,9 @@ python capture_session.py
 
 ## 五、云端定时 & 手动测试
 
-- 定时默认 **00:45 UTC = 北京/新加坡 08:45**。改时间编辑工作流 `cron`（本地时间减 8 小时）。
+- 定时：工作流本身**没有 `cron` 了**，实际由 cron-job.org 用 GitHub API 每天 **00:20 UTC = 北京 08:20** 触发（仅工作日）。改时间要去 cron-job.org 那个任务上改。
 - 手动测：Actions → Run workflow。日志出现 `已加载登录会话 cookie（来自 Secret）` → `拿到 PDF` → `已发送` = 成功。
+- **测试时只想发给自己**：点 Run workflow 时在 `test_to` 输入框里填你自己的邮箱，这次运行就只发这个地址，不会打扰正常收件人；留空则按 `MAIL_TO` 正常发送（cron-job.org 定时走的也是这条）。
 - 若 `保存的登录会话已失效`：cookie 过期或被反爬，重跑 capture_session.py 刷新；持续不行见下。
 
 ---
