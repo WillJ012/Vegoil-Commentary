@@ -33,9 +33,10 @@ jobs:
           SMTP_PORT:         ${{ secrets.SMTP_PORT }}
           SMTP_SSL:          ${{ secrets.SMTP_SSL }}
           MAIL_TO:           ${{ secrets.MAIL_TO }}
-          MINIMAX_API_KEY:   ${{ secrets.MINIMAX_API_KEY }}
-          MINIMAX_BASE_URL:  ${{ secrets.MINIMAX_BASE_URL }}
-          MINIMAX_MODEL:     ${{ secrets.MINIMAX_MODEL }}
+          LLM_API_KEY:       ${{ secrets.LLM_API_KEY }}
+          LLM_BASE_URL:      ${{ secrets.LLM_BASE_URL }}
+          LLM_MODEL:         ${{ secrets.LLM_MODEL }}
+          LLM_MAX_TOKENS:    ${{ secrets.LLM_MAX_TOKENS }}
           SENDER_CONTAINS:   ${{ secrets.SENDER_CONTAINS }}
           SUBJECT_CONTAINS:  ${{ secrets.SUBJECT_CONTAINS }}
           LINK_REGEX:        ${{ secrets.LINK_REGEX }}
