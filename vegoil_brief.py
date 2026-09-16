@@ -5,7 +5,7 @@
   1) 读邮箱(IMAP)，找到最新一封 Fastmarkets 植物油 newsletter，提取其中的下载链接
   2) 用 Playwright 无头浏览器登录 Fastmarkets，下载该链接的 PDF
   3) 抽取 PDF 中的 "Vegoils commentary"（处理双栏排版）
-  4) 用 MiniMax 翻译 + 总结成中文简报
+  4) 用大模型翻译 + 总结成中文简报
   5) 通过 SMTP 把简报发到你的邮箱
 
 ⚠️ 前提：Fastmarkets 登录无 2FA；云端可能被反爬拦截，失败时看 debug/ 截图。
@@ -86,10 +86,12 @@ LOOKBACK_DAYS    = int(env("LOOKBACK_DAYS", 2))
 # 从邮件正文提取下载链接的正则（默认抓 downloads.fastmarkets.com/newsletter 链接）
 LINK_REGEX = env("LINK_REGEX", r'https://downloads\.fastmarkets\.com/newsletter/[^\s"\'<>]+')
 
-# MiniMax（OpenAI 兼容）
-MINIMAX_API_KEY  = env("MINIMAX_API_KEY", required=True)
-MINIMAX_BASE_URL = env("MINIMAX_BASE_URL", "https://api.minimax.io/v1")
-MODEL = env("MINIMAX_MODEL", "MiniMax-M2.5")
+# 大模型（OpenAI 兼容接口）
+LLM_API_KEY    = env("LLM_API_KEY", required=True)
+LLM_BASE_URL   = env("LLM_BASE_URL", "https://opencode.ai/zen/go/v1")
+LLM_MODEL      = env("LLM_MODEL", "deepseek-v4.1-flash")
+# 输出上限。本篇要逐段全文翻译，预算给足；若服务端拒绝过大的值，用 Secret 把 LLM_MAX_TOKENS 调小。
+LLM_MAX_TOKENS = int(env("LLM_MAX_TOKENS", "32000"))
 
 DEBUG_DIR = "debug"
 
@@ -398,7 +400,7 @@ def extract_news_text(pdf_bytes):
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# 4) MiniMax 翻译总结
+# 4) 大模型翻译总结
 # ──────────────────────────────────────────────────────────────────────────
 # 术语对照表：发现译得不对的词，照着格式往这里加一行即可（不用懂代码）。
 # 左边是英文原文，右边是你要的中文译法。
@@ -462,7 +464,7 @@ newsletter 原文如下：
 def _clean_model_html(text):
     """去掉思考过程/代码围栏，只保留从 <h2> 开始的正式译文。"""
     text = (text or "").strip()
-    # 1) 去掉 MiniMax 的 <think>...</think> 思考块（可能未闭合）
+    # 1) 去掉思考块 <think>...</think>（推理型模型会先输出一段思考，可能未闭合）
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.S | re.I)
     text = re.sub(r"<think>.*$", "", text, flags=re.S | re.I)
     text = re.sub(r"</?think>", "", text, flags=re.I)
@@ -491,28 +493,26 @@ def _chinese_ratio(html):
 def _call_model(client, prompt, extra_system=""):
     sys = "你是专业的大宗商品翻译，全程只输出中文译文（专有缩写除外），不输出任何思考过程或额外说明。" + extra_system
     resp = client.chat.completions.create(
-        model=MODEL,
-        max_tokens=160000,
+        model=LLM_MODEL,
+        max_tokens=LLM_MAX_TOKENS,
         temperature=0.2,
         messages=[
             {"role": "system", "content": sys},
             {"role": "user", "content": prompt},
         ],
-        # MiniMax 思考型模型：把思考分流到 reasoning_details，content 只留正文
-        extra_body={"reasoning_split": True},
     )
     finish = resp.choices[0].finish_reason
     return _clean_model_html(resp.choices[0].message.content or ""), finish
 
 
 def summarize_to_chinese(news_text, date_str, real_title=None):
-    client = OpenAI(api_key=MINIMAX_API_KEY, base_url=MINIMAX_BASE_URL)
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
     title_for_prompt = real_title or "（未能自动识别，请你自己找正文最完整的那篇 Vegoils commentary）"
     prompt = PROMPT_TEMPLATE.format(
         date=date_str, glossary=_GLOSSARY_LINES,
         real_title=title_for_prompt, body=news_text)
 
-    log(f"调用 MiniMax（{MODEL}）翻译 ...")
+    log(f"调用模型 {LLM_MODEL} 翻译 ...")
     html, finish = _call_model(client, prompt)
     ratio = _chinese_ratio(html)
     log(f"译文中文占比：{ratio:.0%}")
@@ -528,10 +528,11 @@ def summarize_to_chinese(news_text, date_str, real_title=None):
         log(f"重试后中文占比：{ratio:.0%}")
 
     if finish == "length":
-        log("⚠️ 译文可能被长度上限截断（finish_reason=length），如发现结尾不完整，需再调高 max_tokens。")
+        log("⚠️ 译文可能被长度上限截断（finish_reason=length）。"
+            f"当前 LLM_MAX_TOKENS={LLM_MAX_TOKENS}，如结尾不完整就把它调大（或在服务端上限内调到最大值）。")
 
     if not html or "<h2" not in html:
-        raise RuntimeError("MiniMax 返回内容异常（无正文标题），请检查模型名/额度/base_url。")
+        raise RuntimeError(f"模型 {LLM_MODEL} 返回内容异常（无正文标题），请检查模型名/额度/base_url。")
     return html
 
 
