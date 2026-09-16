@@ -1,6 +1,6 @@
 # 每日植物油评论简报（自动）
 
-**分工**：你每天（时间不限）在本地跑一下 `capture_session.py` 刷新登录 cookie，它会自动推送到 GitHub Secret；云端 GitHub Actions 每天 08:45 定时跑整套：读邮箱拿 newsletter 下载链接 → 用你刷新的 cookie 下载 PDF → 抽 **Vegoils commentary** → MiniMax 翻译总结 → 发到你邮箱。
+**分工**：你每天（时间不限）在本地跑一下 `capture_session.py` 刷新登录 cookie，它会自动推送到 GitHub Secret；云端 GitHub Actions 每天 08:45 定时跑整套：读邮箱拿 newsletter 下载链接 → 用你刷新的 cookie 下载 PDF → 抽 **Vegoils commentary** → 大模型翻译总结 → 发到你邮箱。
 
 > 这样定时的稳定性交给云端，登录态的新鲜度靠你每天刷一次。下载链接需要登录、且无头浏览器“冷启动登录”会被服务端 500，所以用你真浏览器登录后的 cookie 来绕过。
 
@@ -11,8 +11,13 @@
 ### 1. 企业邮箱 IMAP + 授权码
 邮箱网页端开 IMAP，生成**授权码**（非登录密码）。常见：腾讯企业邮 imap/smtp.exmail.qq.com、阿里 imap/smtp.qiye.aliyun.com、网易 imaphz/smtphz.qiye.163.com。
 
-### 2. MiniMax API Key
-platform.minimax.io（国内 platform.minimaxi.com）→ 接口密钥页新建。国内站 key 要把 `MINIMAX_BASE_URL` 设为 `https://api.minimaxi.com/v1`。
+### 2. 大模型 API Key
+
+当前默认走 **OpenCode Zen**：`LLM_BASE_URL` 默认 `https://opencode.ai/zen/go/v1`，`LLM_MODEL` 默认 `deepseek-v4.1-flash`。
+在 opencode.ai 登录后加账单、复制 API Key，填到仓库 Secret `LLM_API_KEY` 即可（另外两个有默认值，通常不用填）。
+
+换别家（OpenAI 兼容的都行）：把 `LLM_BASE_URL` 和 `LLM_MODEL` 两个 Secret 覆盖成目标服务的值。
+注意 `max_tokens` 上限各家不同，如果报 400 就调小 `LLM_MAX_TOKENS`。
 
 ### 3. GitHub Token（给本地脚本改 Secret 的权限）
 GitHub → Settings → Developer settings → Personal access tokens → **Fine-grained tokens** → 只授权你这个仓库 → Repository permissions → **Secrets: Read and write** → 生成并复制。
@@ -57,10 +62,10 @@ LOCAL_RUN.md
 | `IMAP_USER` | 你的完整邮箱地址 | ✅ |
 | `IMAP_PASS` | 邮箱授权码 | ✅ |
 | `SMTP_HOST` | 如 smtp.exmail.qq.com | ✅ |
-| `MINIMAX_API_KEY` | MiniMax Key | ✅ |
+| `LLM_API_KEY` | 大模型 API Key（当前 OpenCode Zen） | ✅ |
 | `FM_STORAGE_STATE` | 留空即可——首次跑 capture_session.py 会自动创建/填充 | （自动） |
 | `MAIL_TO` | 收件地址，默认发回自己 | 选填 |
-| 其它 `IMAP_PORT`/`SMTP_PORT`/`SMTP_SSL`/`MINIMAX_BASE_URL`/`MINIMAX_MODEL`/`SENDER_CONTAINS`/`SUBJECT_CONTAINS`/`LINK_REGEX` | 见 `.env.example`，不填用默认 | 选填 |
+| 其它 `IMAP_PORT`/`SMTP_PORT`/`SMTP_SSL`/`LLM_BASE_URL`/`LLM_MODEL`/`LLM_MAX_TOKENS`/`SENDER_CONTAINS`/`SUBJECT_CONTAINS`/`LINK_REGEX` | 见 `.env.example`，不填用默认 | 选填 |
 
 ---
 
