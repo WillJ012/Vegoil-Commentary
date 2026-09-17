@@ -93,6 +93,13 @@ LINK_REGEX = env("LINK_REGEX", r'https://downloads\.fastmarkets\.com/newsletter/
 LLM_API_KEY    = env("LLM_API_KEY")
 LLM_BASE_URL   = env("LLM_BASE_URL", "https://opencode.ai/zen/go/v1")
 LLM_MODEL      = env("LLM_MODEL", "deepseek-v4.1-flash")
+# OpenCode Zen 的 /zen/go/v1 是给 coding agent 用的端点，文档要求：
+#   1) 带上稳定的 x-opencode-session（用于路由与提示缓存），否则 400 MissingSessionID
+#   2) 客户端用自己的 User-Agent，不要用通用 SDK 的名字
+LLM_HEADERS = {
+    "x-opencode-session": "vegoil-daily-brief",
+    "User-Agent": "vegoil-brief/1.0",
+}
 # 输出上限。本篇要逐段全文翻译，预算给足；若服务端拒绝过大的值，用 Secret 把 LLM_MAX_TOKENS 调小。
 LLM_MAX_TOKENS = int(env("LLM_MAX_TOKENS", "32000"))
 
@@ -511,7 +518,7 @@ def _call_model(client, prompt, extra_system=""):
 def summarize_to_chinese(news_text, date_str, real_title=None):
     if not LLM_API_KEY:
         raise RuntimeError("缺少 LLM_API_KEY，请检查 GitHub Secrets。")
-    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
+    client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL, default_headers=LLM_HEADERS)
     title_for_prompt = real_title or "（未能自动识别，请你自己找正文最完整的那篇 Vegoils commentary）"
     prompt = PROMPT_TEMPLATE.format(
         date=date_str, glossary=_GLOSSARY_LINES,
