@@ -87,10 +87,12 @@ LOOKBACK_DAYS    = int(env("LOOKBACK_DAYS", 2))
 LINK_REGEX = env("LINK_REGEX", r'https://downloads\.fastmarkets\.com/newsletter/[^\s"\'<>]+')
 
 # 大模型（OpenAI 兼容接口）
-# 过渡期：优先读 LLM_*，没设时回退到旧的 MINIMAX_* 名字（三处回退等新工作流生效后可删）
-LLM_API_KEY    = env("LLM_API_KEY") or env("MINIMAX_API_KEY")
-LLM_BASE_URL   = env("LLM_BASE_URL") or env("MINIMAX_BASE_URL") or "https://opencode.ai/zen/go/v1"
-LLM_MODEL      = env("LLM_MODEL") or env("MINIMAX_MODEL") or "deepseek-v4.1-flash"
+# 注意：这里三个配置必须来自同一家。曾经做过“逐个变量回退到 MINIMAX_*”的兼容，
+# 结果出现「新 key + 旧 endpoint」的错配，向 MiniMax 发 OpenCode 的 key 直接 401
+# （2026-09-17 就是这么漏发的）。要换服务就整套一起换，不要只改其中一个。
+LLM_API_KEY    = env("LLM_API_KEY")
+LLM_BASE_URL   = env("LLM_BASE_URL", "https://opencode.ai/zen/go/v1")
+LLM_MODEL      = env("LLM_MODEL", "deepseek-v4.1-flash")
 # 输出上限。本篇要逐段全文翻译，预算给足；若服务端拒绝过大的值，用 Secret 把 LLM_MAX_TOKENS 调小。
 LLM_MAX_TOKENS = int(env("LLM_MAX_TOKENS", "32000"))
 
@@ -508,7 +510,7 @@ def _call_model(client, prompt, extra_system=""):
 
 def summarize_to_chinese(news_text, date_str, real_title=None):
     if not LLM_API_KEY:
-        raise RuntimeError("缺少 LLM_API_KEY（也回退不到旧的 MINIMAX_API_KEY），请检查 GitHub Secrets。")
+        raise RuntimeError("缺少 LLM_API_KEY，请检查 GitHub Secrets。")
     client = OpenAI(api_key=LLM_API_KEY, base_url=LLM_BASE_URL)
     title_for_prompt = real_title or "（未能自动识别，请你自己找正文最完整的那篇 Vegoils commentary）"
     prompt = PROMPT_TEMPLATE.format(
